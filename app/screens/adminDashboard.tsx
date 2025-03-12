@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Alert,
   Linking,
+  ActivityIndicator,
 } from "react-native";
 import React, { useState, useEffect } from "react";
 import {
@@ -18,6 +19,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../../config/FirebaseConfig";
 import { router, Stack } from "expo-router";
+import DateTimePicker from "@react-native-community/datetimepicker";
 
 interface BookingSlot {
   id: string;
@@ -35,12 +37,20 @@ export default function adminDashboard() {
   const [activeFilter, setActiveFilter] = useState<
     "pending" | "approved" | "rejected" | "all"
   >("pending");
+  const [loading, setLoading] = useState(true);
+  const [showDateFilter, setShowDateFilter] = useState(false);
+  const [startDate, setStartDate] = useState(new Date());
+  const [endDate, setEndDate] = useState(new Date());
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
+  const [isDateFilterActive, setIsDateFilterActive] = useState(false);
 
   useEffect(() => {
     fetchBookings();
-  }, [activeFilter]);
+  }, [activeFilter, isDateFilterActive, startDate, endDate]);
 
   const fetchBookings = async () => {
+    setLoading(true);
     try {
       const bookingsRef = collection(db, "bookings");
       let q;
@@ -53,15 +63,28 @@ export default function adminDashboard() {
 
       const querySnapshot = await getDocs(q);
 
-      const bookings: BookingSlot[] = [];
+      let bookings: BookingSlot[] = [];
       querySnapshot.forEach((doc) => {
         bookings.push({ id: doc.id, ...doc.data() } as BookingSlot);
       });
+
+      // Apply date filter if active
+      if (isDateFilterActive) {
+        const startTimestamp = startDate.setHours(0, 0, 0, 0);
+        const endTimestamp = endDate.setHours(23, 59, 59, 999);
+
+        bookings = bookings.filter((booking) => {
+          const bookingDate = new Date(booking.date).getTime();
+          return bookingDate >= startTimestamp && bookingDate <= endTimestamp;
+        });
+      }
 
       setBookings(bookings);
     } catch (error) {
       console.error("Error fetching bookings:", error);
       Alert.alert("Error", "Failed to fetch bookings");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -119,6 +142,43 @@ export default function adminDashboard() {
     Linking.openURL(`tel:${phoneNumber}`);
   };
 
+  const toggleDateFilter = () => {
+    setShowDateFilter(!showDateFilter);
+    if (!showDateFilter) {
+      // Reset date filter when opening
+      setIsDateFilterActive(false);
+    }
+  };
+
+  const applyDateFilter = () => {
+    if (startDate > endDate) {
+      Alert.alert("Invalid Date Range", "Start date cannot be after end date");
+      return;
+    }
+    setIsDateFilterActive(true);
+    setShowDateFilter(false);
+  };
+
+  const clearDateFilter = () => {
+    setIsDateFilterActive(false);
+    setStartDate(new Date());
+    setEndDate(new Date());
+  };
+
+  const onStartDateChange = (event: any, selectedDate?: Date) => {
+    setShowStartPicker(false);
+    if (selectedDate) {
+      setStartDate(selectedDate);
+    }
+  };
+
+  const onEndDateChange = (event: any, selectedDate?: Date) => {
+    setShowEndPicker(false);
+    if (selectedDate) {
+      setEndDate(selectedDate);
+    }
+  };
+
   return (
     <>
       <Stack.Screen
@@ -145,6 +205,7 @@ export default function adminDashboard() {
           <Text style={styles.reportsButtonText}>View Reports</Text>
         </TouchableOpacity>
 
+        {/* Status Filter */}
         <View style={styles.filterContainer}>
           <TouchableOpacity
             style={[
@@ -153,7 +214,14 @@ export default function adminDashboard() {
             ]}
             onPress={() => setActiveFilter("all")}
           >
-            <Text style={styles.filterText}>All</Text>
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "all" && styles.activeFilterText,
+              ]}
+            >
+              All
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[
@@ -162,7 +230,14 @@ export default function adminDashboard() {
             ]}
             onPress={() => setActiveFilter("pending")}
           >
-            <Text style={styles.filterText}>Pending</Text>
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "pending" && styles.activeFilterText,
+              ]}
+            >
+              Pending
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[
@@ -171,7 +246,14 @@ export default function adminDashboard() {
             ]}
             onPress={() => setActiveFilter("approved")}
           >
-            <Text style={styles.filterText}>Approved</Text>
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "approved" && styles.activeFilterText,
+              ]}
+            >
+              Approved
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[
@@ -180,9 +262,108 @@ export default function adminDashboard() {
             ]}
             onPress={() => setActiveFilter("rejected")}
           >
-            <Text style={styles.filterText}>Rejected</Text>
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "rejected" && styles.activeFilterText,
+              ]}
+            >
+              Rejected
+            </Text>
           </TouchableOpacity>
         </View>
+
+        {/* Date Filter Button */}
+        <View style={styles.dateFilterButtonContainer}>
+          <TouchableOpacity
+            style={[
+              styles.dateFilterButton,
+              isDateFilterActive && styles.activeDateFilter,
+            ]}
+            onPress={toggleDateFilter}
+          >
+            <Text
+              style={[
+                styles.dateFilterText,
+                isDateFilterActive && styles.activeDateFilterText,
+              ]}
+            >
+              {isDateFilterActive
+                ? `${formatDate(startDate.toISOString())} - ${formatDate(
+                    endDate.toISOString()
+                  )}`
+                : "Date Filter"}
+            </Text>
+          </TouchableOpacity>
+          {isDateFilterActive && (
+            <TouchableOpacity
+              style={styles.clearFilterButton}
+              onPress={clearDateFilter}
+            >
+              <Text style={styles.clearFilterText}>Clear</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Date Filter Selection UI */}
+        {showDateFilter && (
+          <View style={styles.datePickerContainer}>
+            <Text style={styles.datePickerLabel}>Select Date Range:</Text>
+
+            <View style={styles.dateRow}>
+              <Text style={styles.dateLabel}>Start:</Text>
+              <TouchableOpacity
+                style={styles.dateInput}
+                onPress={() => setShowStartPicker(true)}
+              >
+                <Text>{formatDate(startDate.toISOString())}</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.dateRow}>
+              <Text style={styles.dateLabel}>End:</Text>
+              <TouchableOpacity
+                style={styles.dateInput}
+                onPress={() => setShowEndPicker(true)}
+              >
+                <Text>{formatDate(endDate.toISOString())}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {showStartPicker && (
+              <DateTimePicker
+                value={startDate}
+                mode="date"
+                display="default"
+                onChange={onStartDateChange}
+              />
+            )}
+
+            {showEndPicker && (
+              <DateTimePicker
+                value={endDate}
+                mode="date"
+                display="default"
+                onChange={onEndDateChange}
+              />
+            )}
+
+            <View style={styles.dateFilterActions}>
+              <TouchableOpacity
+                style={styles.cancelDateButton}
+                onPress={() => setShowDateFilter(false)}
+              >
+                <Text style={styles.cancelDateText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.applyDateButton}
+                onPress={applyDateFilter}
+              >
+                <Text style={styles.applyDateText}>Apply</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         <Text style={styles.title}>
           {activeFilter === "all"
@@ -192,12 +373,23 @@ export default function adminDashboard() {
             : activeFilter === "approved"
             ? "Approved Bookings"
             : "Rejected Bookings"}
+          {isDateFilterActive
+            ? ` (${formatDate(startDate.toISOString())} - ${formatDate(
+                endDate.toISOString()
+              )})`
+            : ""}
         </Text>
 
-        {bookings.length === 0 ? (
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Loading bookings...</Text>
+          </View>
+        ) : bookings.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>
               No {activeFilter} bookings found
+              {isDateFilterActive ? " in selected date range" : ""}
             </Text>
           </View>
         ) : (
@@ -279,6 +471,9 @@ const styles = StyleSheet.create({
   filterText: {
     fontWeight: "500",
     color: "#333",
+  },
+  activeFilterText: {
+    color: "#fff",
   },
   title: {
     fontSize: 22,
@@ -390,5 +585,104 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "bold",
     fontSize: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: "#666",
+  },
+  dateFilterButtonContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  dateFilterButton: {
+    backgroundColor: "#f0f0f0",
+    borderRadius: 8,
+    padding: 10,
+    flexGrow: 1,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#ddd",
+  },
+  activeDateFilter: {
+    backgroundColor: "#e6f2ff",
+    borderColor: "#007AFF",
+  },
+  dateFilterText: {
+    fontWeight: "500",
+    color: "#333",
+  },
+  activeDateFilterText: {
+    color: "#007AFF",
+  },
+  clearFilterButton: {
+    marginLeft: 8,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: "#f8f8f8",
+    borderWidth: 1,
+    borderColor: "#ddd",
+  },
+  clearFilterText: {
+    color: "#666",
+  },
+  datePickerContainer: {
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    elevation: 2,
+  },
+  datePickerLabel: {
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 12,
+  },
+  dateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  dateLabel: {
+    width: 50,
+    fontSize: 16,
+  },
+  dateInput: {
+    flex: 1,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 4,
+    backgroundColor: "#f9f9f9",
+  },
+  dateFilterActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 8,
+  },
+  cancelDateButton: {
+    padding: 8,
+    marginRight: 12,
+  },
+  cancelDateText: {
+    color: "#666",
+  },
+  applyDateButton: {
+    backgroundColor: "#007AFF",
+    borderRadius: 4,
+    padding: 8,
+    paddingHorizontal: 16,
+  },
+  applyDateText: {
+    color: "#fff",
+    fontWeight: "500",
   },
 });
