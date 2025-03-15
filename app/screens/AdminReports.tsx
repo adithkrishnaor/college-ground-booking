@@ -4,13 +4,16 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Dimensions,
+  Modal,
+  Animated,
+  ActivityIndicator,
 } from "react-native";
 import React, { useState, useEffect } from "react";
 import { collection, query, getDocs } from "firebase/firestore";
 import { db } from "../../config/FirebaseConfig";
 import { router, Stack } from "expo-router";
-import { BarChart, LineChart } from "react-native-chart-kit";
+import { Ionicons } from "@expo/vector-icons";
+import DateTimePicker from "@react-native-community/datetimepicker";
 
 interface BookingSlot {
   id: string;
@@ -25,17 +28,11 @@ interface BookingSlot {
 
 export default function AdminReports() {
   const [bookings, setBookings] = useState<BookingSlot[]>([]);
-  const [timeFrame, setTimeFrame] = useState<"weekly" | "monthly" | "yearly">(
-    "monthly"
-  );
-  const [groundFilter, setGroundFilter] = useState<
-    "all" | "cricket" | "football"
-  >("all");
+  const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [filterType, setFilterType] = useState<"day" | "month" | "year">("day");
   const [reportData, setReportData] = useState({
-    labels: [] as string[],
-    approved: [] as number[],
-    rejected: [] as number[],
-    pending: [] as number[],
     totalCount: 0,
     approvedCount: 0,
     rejectedCount: 0,
@@ -43,6 +40,10 @@ export default function AdminReports() {
     cricketCount: 0,
     footballCount: 0,
   });
+
+  // Menu state and animation
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [slideAnim] = useState(new Animated.Value(-300)); // Start off-screen to the left
 
   useEffect(() => {
     fetchAllBookings();
@@ -52,9 +53,10 @@ export default function AdminReports() {
     if (bookings.length > 0) {
       generateReportData();
     }
-  }, [bookings, timeFrame, groundFilter]);
+  }, [bookings, selectedDate, filterType]);
 
   const fetchAllBookings = async () => {
+    setLoading(true);
     try {
       const bookingsRef = collection(db, "bookings");
       const q = query(bookingsRef);
@@ -68,163 +70,59 @@ export default function AdminReports() {
       setBookings(fetchedBookings);
     } catch (error) {
       console.error("Error fetching bookings:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
   const generateReportData = () => {
-    const currentDate = new Date();
-    let labels: string[] = [];
-    let approvedData: { [key: string]: number } = {};
-    let rejectedData: { [key: string]: number } = {};
-    let pendingData: { [key: string]: number } = {};
-
-    // Initialize data structure based on timeFrame
-    if (timeFrame === "weekly") {
-      // Last 7 days
-      for (let i = 6; i >= 0; i--) {
-        const date = new Date();
-        date.setDate(currentDate.getDate() - i);
-        const label = date.toLocaleDateString("en-US", { weekday: "short" });
-        labels.push(label);
-        approvedData[label] = 0;
-        rejectedData[label] = 0;
-        pendingData[label] = 0;
-      }
-    } else if (timeFrame === "monthly") {
-      // Last 30 days (grouped by week)
-      for (let i = 0; i < 4; i++) {
-        const label = `Week ${i + 1}`;
-        labels.push(label);
-        approvedData[label] = 0;
-        rejectedData[label] = 0;
-        pendingData[label] = 0;
-      }
-    } else if (timeFrame === "yearly") {
-      // Last 12 months
-      const monthNames = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      for (let i = 0; i < 12; i++) {
-        const monthIndex = (currentDate.getMonth() - i + 12) % 12;
-        const label = monthNames[monthIndex];
-        labels.push(label);
-        approvedData[label] = 0;
-        rejectedData[label] = 0;
-        pendingData[label] = 0;
-      }
-      // Reverse the array to show chronological order
-      labels = labels.reverse();
-    }
-
-    // Process booking data
     let approvedCount = 0;
     let rejectedCount = 0;
     let pendingCount = 0;
     let cricketCount = 0;
     let footballCount = 0;
 
-    // Filter bookings by ground type first
     const filteredBookings = bookings.filter((booking) => {
-      if (groundFilter === "all") {
-        return true;
+      const bookingDate = new Date(booking.date);
+      const selectedYear = selectedDate.getFullYear();
+      const selectedMonth = selectedDate.getMonth();
+      const selectedDay = selectedDate.getDate();
+
+      if (filterType === "year") {
+        return bookingDate.getFullYear() === selectedYear;
+      } else if (filterType === "month") {
+        return (
+          bookingDate.getFullYear() === selectedYear &&
+          bookingDate.getMonth() === selectedMonth
+        );
+      } else if (filterType === "day") {
+        return (
+          bookingDate.getFullYear() === selectedYear &&
+          bookingDate.getMonth() === selectedMonth &&
+          bookingDate.getDate() === selectedDay
+        );
       }
-      return booking.groundType?.toLowerCase() === groundFilter;
+      return false;
     });
 
-    // Now process the filtered bookings
     filteredBookings.forEach((booking) => {
-      // Count by ground type
-      const groundType = booking.groundType?.toLowerCase();
-      if (groundType === "cricket") {
+      if (booking.status === "approved") {
+        approvedCount++;
+      } else if (booking.status === "rejected") {
+        rejectedCount++;
+      } else {
+        pendingCount++;
+      }
+
+      if (booking.groundType?.toLowerCase() === "cricket") {
         cricketCount++;
-      } else if (groundType === "football") {
+      } else if (booking.groundType?.toLowerCase() === "football") {
         footballCount++;
       }
-
-      const bookingDate = new Date(booking.date);
-      let label = "";
-      let include = false;
-
-      if (timeFrame === "weekly") {
-        label = bookingDate.toLocaleDateString("en-US", { weekday: "short" });
-        // Only count bookings from the last 7 days
-        const daysDiff =
-          (currentDate.getTime() - bookingDate.getTime()) / (1000 * 3600 * 24);
-        include = daysDiff <= 7;
-      } else if (timeFrame === "monthly") {
-        // Group into weeks (last 30 days)
-        const daysDiff =
-          (currentDate.getTime() - bookingDate.getTime()) / (1000 * 3600 * 24);
-        if (daysDiff <= 30) {
-          const weekNum = Math.floor(daysDiff / 7);
-          if (weekNum < 4) {
-            label = `Week ${4 - weekNum}`;
-            include = true;
-          }
-        }
-      } else if (timeFrame === "yearly") {
-        // Only count bookings from the last 12 months
-        const monthDiff =
-          (currentDate.getMonth() - bookingDate.getMonth() + 12) % 12;
-        const yearDiff = currentDate.getFullYear() - bookingDate.getFullYear();
-
-        include = yearDiff === 0 || (yearDiff === 1 && monthDiff === 0);
-
-        if (include) {
-          const monthNames = [
-            "Jan",
-            "Feb",
-            "Mar",
-            "Apr",
-            "May",
-            "Jun",
-            "Jul",
-            "Aug",
-            "Sep",
-            "Oct",
-            "Nov",
-            "Dec",
-          ];
-          label = monthNames[bookingDate.getMonth()];
-        }
-      }
-
-      if (include && labels.includes(label)) {
-        if (booking.status === "approved") {
-          approvedData[label]++;
-          approvedCount++;
-        } else if (booking.status === "rejected") {
-          rejectedData[label]++;
-          rejectedCount++;
-        } else {
-          pendingData[label]++;
-          pendingCount++;
-        }
-      }
     });
 
-    // Convert data objects to arrays that match the order of labels
-    const approvedArray = labels.map((label) => approvedData[label] || 0);
-    const rejectedArray = labels.map((label) => rejectedData[label] || 0);
-    const pendingArray = labels.map((label) => pendingData[label] || 0);
-
     setReportData({
-      labels,
-      approved: approvedArray,
-      rejected: rejectedArray,
-      pending: pendingArray,
-      totalCount: approvedCount + rejectedCount + pendingCount,
+      totalCount: filteredBookings.length,
       approvedCount,
       rejectedCount,
       pendingCount,
@@ -233,290 +131,259 @@ export default function AdminReports() {
     });
   };
 
+  const handleDateChange = (event: any, date?: Date) => {
+    setShowDatePicker(false);
+    if (date) {
+      setSelectedDate(date);
+    }
+  };
+
+  const toggleMenu = () => {
+    if (!menuVisible) {
+      setMenuVisible(true);
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.timing(slideAnim, {
+        toValue: -300,
+        duration: 300,
+        useNativeDriver: true,
+      }).start(() => {
+        setMenuVisible(false);
+      });
+    }
+  };
+
+  const navigateTo = (route: any) => {
+    setMenuVisible(false);
+    router.push(route as never);
+  };
+
   const handleLogout = () => {
     router.push("/login");
   };
 
-  // Update the chart configurations
-  const screenWidth = Dimensions.get("window").width - 32; // Account for container padding
-  const chartConfig = {
-    backgroundGradientFrom: "#fff",
-    backgroundGradientTo: "#fff",
-    decimalPlaces: 0,
-    color: (opacity = 1) => `rgba(0, 122, 255, ${opacity})`,
-    labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-    style: {
-      borderRadius: 16,
-      paddingRight: 16, // Add padding to prevent label cutoff
-    },
-    barPercentage: 0.5,
-    propsForBackgroundLines: {
-      strokeWidth: 1,
-      stroke: "#e3e3e3",
-    },
-    propsForLabels: {
-      fontSize: 12, // Smaller font size for better fit
-    },
-  };
-
-  // Update the bar data structure
-  const barData = {
-    labels: reportData.labels,
-    datasets: [
-      {
-        data: reportData.approved.map((val) => val || 0), // Handle null/undefined values
-        color: (opacity = 1) => `rgba(76, 175, 80, ${opacity})`,
-      },
-      {
-        data: reportData.rejected.map((val) => val || 0),
-        color: (opacity = 1) => `rgba(244, 67, 54, ${opacity})`,
-      },
-      {
-        data: reportData.pending.map((val) => val || 0),
-        color: (opacity = 1) => `rgba(255, 193, 7, ${opacity})`,
-      },
-    ],
-    legend: ["Approved", "Rejected", "Pending"],
-  };
-
-  // Update the line data structure
-  const lineData = {
-    labels: reportData.labels,
-    datasets: [
-      {
-        data: reportData.labels.map(
-          (_, i) =>
-            (reportData.approved[i] || 0) +
-            (reportData.rejected[i] || 0) +
-            (reportData.pending[i] || 0)
-        ),
-        color: (opacity = 1) => `rgba(0, 122, 255, ${opacity})`,
-      },
-    ],
-    legend: ["Total Bookings"],
-  };
-
-  // Create ground type distribution data
-  const groundDistributionData = {
-    labels: ["Cricket", "Football"],
-    datasets: [
-      {
-        data: [reportData.cricketCount || 0, reportData.footballCount || 0],
-        color: (opacity = 1) => `rgba(75, 192, 192, ${opacity})`,
-      },
-    ],
-    legend: ["Bookings Count"],
-  };
-
-  // In the return statement, wrap the charts in error boundaries
   return (
     <>
       <Stack.Screen
         options={{
           headerTitle: "Booking Reports",
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={handleLogout}
-              style={styles.logoutButton}
-            >
-              <Text style={styles.logoutText}>Logout</Text>
+          headerBackVisible: false, // Remove back button
+          headerLeft: () => (
+            <TouchableOpacity onPress={toggleMenu} style={styles.menuButton}>
+              <Ionicons name="menu" size={24} color="#007AFF" />
             </TouchableOpacity>
           ),
         }}
       />
+
+      {/* Side Menu Modal */}
+      <Modal
+        visible={menuVisible}
+        transparent={true}
+        animationType="none"
+        onRequestClose={() => {
+          // Close with animation
+          Animated.timing(slideAnim, {
+            toValue: -300,
+            duration: 300,
+            useNativeDriver: true,
+          }).start(() => {
+            setMenuVisible(false);
+          });
+        }}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            // Close with animation
+            Animated.timing(slideAnim, {
+              toValue: -300,
+              duration: 300,
+              useNativeDriver: true,
+            }).start(() => {
+              setMenuVisible(false);
+            });
+          }}
+        >
+          <Animated.View
+            style={[
+              styles.sideMenu,
+              {
+                transform: [{ translateX: slideAnim }],
+              },
+            ]}
+          >
+            <View style={styles.menuHeader}>
+              <Text style={styles.menuTitle}>Admin Menu</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  // Close with animation
+                  Animated.timing(slideAnim, {
+                    toValue: -300,
+                    duration: 300,
+                    useNativeDriver: true,
+                  }).start(() => {
+                    setMenuVisible(false);
+                  });
+                }}
+              >
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => navigateTo("/screens/adminDashboard")}
+            >
+              <Ionicons name="grid-outline" size={22} color="#007AFF" />
+              <Text style={styles.menuItemText}>Dashboard</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => navigateTo("/screens/AdminReports")}
+            >
+              <Ionicons name="bar-chart-outline" size={22} color="#007AFF" />
+              <Text style={styles.menuItemText}>Reports</Text>
+            </TouchableOpacity>
+
+            {/* Logout Button inside the menu */}
+            <TouchableOpacity
+              style={[styles.menuItem, styles.logoutMenuItem]}
+              onPress={handleLogout}
+            >
+              <Ionicons name="log-out-outline" size={22} color="#f44336" />
+              <Text style={[styles.menuItemText, { color: "#f44336" }]}>
+                Logout
+              </Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </TouchableOpacity>
+      </Modal>
+
       <ScrollView style={styles.container}>
-        {/* Time Frame Filter */}
+        {/* Date Picker and Filter Type Selection */}
         <View style={styles.filterContainer}>
           <TouchableOpacity
             style={[
               styles.filterButton,
-              timeFrame === "weekly" && styles.activeFilter,
+              filterType === "day" && styles.activeFilter,
             ]}
-            onPress={() => setTimeFrame("weekly")}
+            onPress={() => setFilterType("day")}
           >
-            <Text style={styles.filterText}>Weekly</Text>
+            <Text
+              style={[
+                styles.filterText,
+                filterType === "day" && styles.activeFilterText,
+              ]}
+            >
+              Day
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[
               styles.filterButton,
-              timeFrame === "monthly" && styles.activeFilter,
+              filterType === "month" && styles.activeFilter,
             ]}
-            onPress={() => setTimeFrame("monthly")}
+            onPress={() => setFilterType("month")}
           >
-            <Text style={styles.filterText}>Monthly</Text>
+            <Text
+              style={[
+                styles.filterText,
+                filterType === "month" && styles.activeFilterText,
+              ]}
+            >
+              Month
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[
               styles.filterButton,
-              timeFrame === "yearly" && styles.activeFilter,
+              filterType === "year" && styles.activeFilter,
             ]}
-            onPress={() => setTimeFrame("yearly")}
+            onPress={() => setFilterType("year")}
           >
-            <Text style={styles.filterText}>Yearly</Text>
+            <Text
+              style={[
+                styles.filterText,
+                filterType === "year" && styles.activeFilterText,
+              ]}
+            >
+              Year
+            </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Ground Type Filter */}
-        <View style={styles.filterContainer}>
-          <TouchableOpacity
-            style={[
-              styles.filterButton,
-              groundFilter === "all" && styles.activeFilter,
-            ]}
-            onPress={() => setGroundFilter("all")}
-          >
-            <Text style={styles.filterText}>All Grounds</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.filterButton,
-              groundFilter === "cricket" && styles.activeFilter,
-            ]}
-            onPress={() => setGroundFilter("cricket")}
-          >
-            <Text style={styles.filterText}>Cricket</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.filterButton,
-              groundFilter === "football" && styles.activeFilter,
-            ]}
-            onPress={() => setGroundFilter("football")}
-          >
-            <Text style={styles.filterText}>Football</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Ground Type Stats */}
-        <View style={styles.groundStatsContainer}>
-          <Text style={styles.chartTitle}>
-            {groundFilter === "all"
-              ? "Ground Type Distribution"
-              : `${
-                  groundFilter.charAt(0).toUpperCase() + groundFilter.slice(1)
-                } Ground Stats`}
+        {/* Date Picker */}
+        <TouchableOpacity
+          style={styles.datePickerButton}
+          onPress={() => setShowDatePicker(true)}
+        >
+          <Text style={styles.datePickerButtonText}>
+            {filterType === "year"
+              ? selectedDate.getFullYear()
+              : filterType === "month"
+              ? selectedDate.toLocaleString("default", { month: "long" }) +
+                " " +
+                selectedDate.getFullYear()
+              : selectedDate.toLocaleDateString()}
           </Text>
-          <View style={styles.statsContainer}>
-            {groundFilter === "all" && (
-              <>
-                <View style={[styles.statBox, styles.cricketStat]}>
-                  <Text style={styles.statValue}>
-                    {reportData.cricketCount}
-                  </Text>
-                  <Text style={styles.statLabel}>Cricket</Text>
-                </View>
-                <View style={[styles.statBox, styles.footballStat]}>
-                  <Text style={styles.statValue}>
-                    {reportData.footballCount}
-                  </Text>
-                  <Text style={styles.statLabel}>Football</Text>
-                </View>
-              </>
-            )}
-          </View>
-        </View>
+        </TouchableOpacity>
 
-        {/* Summary Stats */}
-        <View style={styles.statsContainer}>
-          <View style={[styles.statBox, styles.totalStat]}>
-            <Text style={styles.statValue}>{reportData.totalCount}</Text>
-            <Text style={styles.statLabel}>Total</Text>
-          </View>
-          <View style={[styles.statBox, styles.approvedStat]}>
-            <Text style={styles.statValue}>{reportData.approvedCount}</Text>
-            <Text style={styles.statLabel}>Approved</Text>
-          </View>
-          <View style={[styles.statBox, styles.rejectedStat]}>
-            <Text style={styles.statValue}>{reportData.rejectedCount}</Text>
-            <Text style={styles.statLabel}>Rejected</Text>
-          </View>
-          <View style={[styles.statBox, styles.pendingStat]}>
-            <Text style={styles.statValue}>{reportData.pendingCount}</Text>
-            <Text style={styles.statLabel}>Pending</Text>
-          </View>
-        </View>
-
-        {/* Ground Distribution Chart (only shown when "All Grounds" is selected) */}
-        {groundFilter === "all" && reportData.labels.length > 0 && (
-          <View style={styles.chartContainer}>
-            <Text style={styles.chartTitle}>Ground Type Distribution</Text>
-            <BarChart
-              data={groundDistributionData}
-              width={screenWidth}
-              height={220}
-              chartConfig={{
-                ...chartConfig,
-                color: (opacity = 1) => `rgba(75, 192, 192, ${opacity})`,
-              }}
-              verticalLabelRotation={0}
-              showValuesOnTopOfBars
-              fromZero
-              yAxisLabel=""
-              yAxisSuffix=""
-              style={styles.barChartStyle}
-            />
-          </View>
+        {showDatePicker && (
+          <DateTimePicker
+            value={selectedDate}
+            mode={
+              filterType === "year"
+                ? "date"
+                : filterType === "month"
+                ? "date"
+                : "date"
+            }
+            display="default"
+            onChange={handleDateChange}
+          />
         )}
 
-        {/* Booking Status Distribution Chart */}
-        {reportData.labels.length > 0 ? (
-          <>
-            <View style={styles.chartContainer}>
-              <Text style={styles.chartTitle}>
-                {groundFilter === "all"
-                  ? "Booking Status Distribution"
-                  : `${
-                      groundFilter.charAt(0).toUpperCase() +
-                      groundFilter.slice(1)
-                    } Booking Status`}
-              </Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <BarChart
-                  data={barData}
-                  width={Math.max(screenWidth, reportData.labels.length * 60)} // Adjust width based on number of labels
-                  height={220}
-                  chartConfig={chartConfig}
-                  verticalLabelRotation={30}
-                  showValuesOnTopOfBars
-                  fromZero
-                  yAxisLabel=""
-                  yAxisSuffix=""
-                  style={styles.barChartStyle}
-                />
-              </ScrollView>
+        {/* Summary Stats */}
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Loading bookings...</Text>
+          </View>
+        ) : (
+          <View style={styles.statsContainer}>
+            <View style={[styles.statBox, styles.totalStat]}>
+              <Text style={styles.statValue}>{reportData.totalCount}</Text>
+              <Text style={styles.statLabel}>Total</Text>
             </View>
-
-            <View style={styles.chartContainer}>
-              <Text style={styles.chartTitle}>
-                {groundFilter === "all"
-                  ? "Total Bookings Trend"
-                  : `${
-                      groundFilter.charAt(0).toUpperCase() +
-                      groundFilter.slice(1)
-                    } Bookings Trend`}
-              </Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <LineChart
-                  data={lineData}
-                  width={Math.max(screenWidth, reportData.labels.length * 60)}
-                  height={220}
-                  chartConfig={chartConfig}
-                  bezier
-                  style={styles.lineChartStyle}
-                  fromZero
-                />
-              </ScrollView>
+            <View style={[styles.statBox, styles.approvedStat]}>
+              <Text style={styles.statValue}>{reportData.approvedCount}</Text>
+              <Text style={styles.statLabel}>Approved</Text>
             </View>
-          </>
-        ) : null}
-
-        {/* Navigate to Dashboard Button */}
-        <TouchableOpacity
-          style={styles.dashboardButton}
-          onPress={() => router.push("/screens/adminDashboard")}
-        >
-          <Text style={styles.dashboardButtonText}>Go to Dashboard</Text>
-        </TouchableOpacity>
+            <View style={[styles.statBox, styles.rejectedStat]}>
+              <Text style={styles.statValue}>{reportData.rejectedCount}</Text>
+              <Text style={styles.statLabel}>Rejected</Text>
+            </View>
+            <View style={[styles.statBox, styles.pendingStat]}>
+              <Text style={styles.statValue}>{reportData.pendingCount}</Text>
+              <Text style={styles.statLabel}>Pending</Text>
+            </View>
+            <View style={[styles.statBox, styles.cricketStat]}>
+              <Text style={styles.statValue}>{reportData.cricketCount}</Text>
+              <Text style={styles.statLabel}>Cricket</Text>
+            </View>
+            <View style={[styles.statBox, styles.footballStat]}>
+              <Text style={styles.statValue}>{reportData.footballCount}</Text>
+              <Text style={styles.statLabel}>Football</Text>
+            </View>
+          </View>
+        )}
       </ScrollView>
     </>
   );
@@ -527,14 +394,6 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
     backgroundColor: "#fff",
-  },
-  logoutButton: {
-    marginRight: 16,
-    padding: 8,
-  },
-  logoutText: {
-    color: "#f44336",
-    fontWeight: "bold",
   },
   filterContainer: {
     flexDirection: "row",
@@ -554,13 +413,26 @@ const styles = StyleSheet.create({
   },
   activeFilter: {
     backgroundColor: "#007AFF",
+    borderColor: "#0056b3",
   },
   filterText: {
     fontWeight: "500",
     color: "#333",
   },
-  groundStatsContainer: {
-    marginBottom: 20,
+  activeFilterText: {
+    color: "#ffffff", // White text for better contrast on blue background
+    fontWeight: "600",
+  },
+  datePickerButton: {
+    backgroundColor: "#f0f0f0",
+    borderRadius: 8,
+    padding: 10,
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  datePickerButtonText: {
+    fontWeight: "500",
+    color: "#333",
   },
   statsContainer: {
     flexDirection: "row",
@@ -616,43 +488,68 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
   },
-  chartContainer: {
-    marginBottom: 25,
-    padding: 15,
-    backgroundColor: "#fff",
-    borderRadius: 8,
-    elevation: 2,
-    width: "100%", // Ensure full width
-    alignItems: "center", // Center the chart
-  },
-  chartTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 10,
-    color: "#333",
-    textAlign: "center",
-  },
-  dashboardButton: {
-    backgroundColor: "#007AFF",
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
     alignItems: "center",
-    marginVertical: 10,
   },
-  dashboardButtonText: {
-    color: "#fff",
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: "#666",
+  },
+  // Menu styles
+  menuButton: {
+    marginLeft: 16,
+    padding: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  sideMenu: {
+    width: "70%",
+    height: "100%",
+    backgroundColor: "#fff",
+    paddingTop: 50,
+    paddingHorizontal: 16,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  menuHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    marginBottom: 20,
+  },
+  menuTitle: {
+    fontSize: 20,
     fontWeight: "bold",
+  },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+  },
+  menuItemText: {
+    marginLeft: 16,
     fontSize: 16,
   },
-  barChartStyle: {
-    marginVertical: 8,
-    borderRadius: 16,
-    paddingVertical: 8,
-  },
-  lineChartStyle: {
-    marginVertical: 8,
-    borderRadius: 16,
-    paddingVertical: 8,
+  logoutMenuItem: {
+    marginTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+    borderBottomWidth: 0,
   },
 });

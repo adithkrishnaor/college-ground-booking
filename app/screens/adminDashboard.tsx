@@ -7,8 +7,10 @@ import {
   Alert,
   Linking,
   ActivityIndicator,
+  Modal,
 } from "react-native";
 import React, { useState, useEffect } from "react";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import {
   collection,
   query,
@@ -19,7 +21,8 @@ import {
 } from "firebase/firestore";
 import { db } from "../../config/FirebaseConfig";
 import { router, Stack } from "expo-router";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import { Ionicons } from "@expo/vector-icons";
+import { Animated } from "react-native";
 
 interface BookingSlot {
   id: string;
@@ -44,6 +47,8 @@ export default function adminDashboard() {
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
   const [isDateFilterActive, setIsDateFilterActive] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [slideAnim] = useState(new Animated.Value(-300)); // Start off-screen to the left
 
   useEffect(() => {
     fetchBookings();
@@ -68,7 +73,6 @@ export default function adminDashboard() {
         bookings.push({ id: doc.id, ...doc.data() } as BookingSlot);
       });
 
-      // Apply date filter if active
       if (isDateFilterActive) {
         const startTimestamp = startDate.setHours(0, 0, 0, 0);
         const endTimestamp = endDate.setHours(23, 59, 59, 999);
@@ -98,13 +102,11 @@ export default function adminDashboard() {
         status: action === "approve" ? "approved" : "rejected",
       });
 
-      // Show success message
       Alert.alert(
         "Success",
         `Booking ${action === "approve" ? "approved" : "rejected"} successfully`
       );
 
-      // Refresh the bookings list
       fetchBookings();
     } catch (error) {
       console.error("Error updating booking:", error);
@@ -129,15 +131,9 @@ export default function adminDashboard() {
   };
 
   const handleLogout = () => {
-    // Add your logout logic here (e.g., clearing auth state)
     router.push("/login");
   };
 
-  const navigateToReports = () => {
-    router.push("/screens/AdminReports");
-  };
-
-  // Function to handle phone call
   const handlePhoneCall = (phoneNumber: string) => {
     Linking.openURL(`tel:${phoneNumber}`);
   };
@@ -145,7 +141,6 @@ export default function adminDashboard() {
   const toggleDateFilter = () => {
     setShowDateFilter(!showDateFilter);
     if (!showDateFilter) {
-      // Reset date filter when opening
       setIsDateFilterActive(false);
     }
   };
@@ -179,6 +174,30 @@ export default function adminDashboard() {
     }
   };
 
+  const toggleMenu = () => {
+    if (!menuVisible) {
+      setMenuVisible(true);
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.timing(slideAnim, {
+        toValue: -300,
+        duration: 300,
+        useNativeDriver: true,
+      }).start(() => {
+        setMenuVisible(false);
+      });
+    }
+  };
+
+  const navigateTo = (route: any) => {
+    setMenuVisible(false);
+    router.push(route as never);
+  };
+
   return (
     <>
       <Stack.Screen
@@ -186,26 +205,99 @@ export default function adminDashboard() {
           headerTitle: "Admin Dashboard",
           headerBackTitle: "Back",
           headerTransparent: false,
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={handleLogout}
-              style={styles.logoutButton}
-            >
-              <Text style={styles.logoutText}>Logout</Text>
+          headerLeft: () => (
+            <TouchableOpacity onPress={toggleMenu} style={styles.menuButton}>
+              <Ionicons name="menu" size={24} color="#007AFF" />
             </TouchableOpacity>
           ),
         }}
       />
-      <View style={styles.container}>
-        {/* Reports Navigation Button */}
-        <TouchableOpacity
-          style={styles.reportsButton}
-          onPress={navigateToReports}
-        >
-          <Text style={styles.reportsButtonText}>View Reports</Text>
-        </TouchableOpacity>
 
-        {/* Status Filter */}
+      <Modal
+        visible={menuVisible}
+        transparent={true}
+        animationType="none"
+        onRequestClose={() => {
+          // Close with animation
+          Animated.timing(slideAnim, {
+            toValue: -300,
+            duration: 300,
+            useNativeDriver: true,
+          }).start(() => {
+            setMenuVisible(false);
+          });
+        }}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            // Close with animation
+            Animated.timing(slideAnim, {
+              toValue: -300,
+              duration: 300,
+              useNativeDriver: true,
+            }).start(() => {
+              setMenuVisible(false);
+            });
+          }}
+        >
+          <Animated.View
+            style={[
+              styles.sideMenu,
+              {
+                transform: [{ translateX: slideAnim }],
+              },
+            ]}
+          >
+            <View style={styles.menuHeader}>
+              <Text style={styles.menuTitle}>Admin Menu</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  // Close with animation
+                  Animated.timing(slideAnim, {
+                    toValue: -300,
+                    duration: 300,
+                    useNativeDriver: true,
+                  }).start(() => {
+                    setMenuVisible(false);
+                  });
+                }}
+              >
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => navigateTo("/screens/adminDashboard")}
+            >
+              <Ionicons name="grid-outline" size={22} color="#007AFF" />
+              <Text style={styles.menuItemText}>Dashboard</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => navigateTo("/screens/AdminReports")}
+            >
+              <Ionicons name="bar-chart-outline" size={22} color="#007AFF" />
+              <Text style={styles.menuItemText}>Reports</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.menuItem, styles.logoutMenuItem]}
+              onPress={handleLogout}
+            >
+              <Ionicons name="log-out-outline" size={22} color="#f44336" />
+              <Text style={[styles.menuItemText, { color: "#f44336" }]}>
+                Logout
+              </Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </TouchableOpacity>
+      </Modal>
+
+      <View style={styles.container}>
         <View style={styles.filterContainer}>
           <TouchableOpacity
             style={[
@@ -273,7 +365,6 @@ export default function adminDashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* Date Filter Button */}
         <View style={styles.dateFilterButtonContainer}>
           <TouchableOpacity
             style={[
@@ -305,7 +396,6 @@ export default function adminDashboard() {
           )}
         </View>
 
-        {/* Date Filter Selection UI */}
         {showDateFilter && (
           <View style={styles.datePickerContainer}>
             <Text style={styles.datePickerLabel}>Select Date Range:</Text>
@@ -684,5 +774,58 @@ const styles = StyleSheet.create({
   applyDateText: {
     color: "#fff",
     fontWeight: "500",
+  },
+  menuButton: {
+    marginLeft: 16,
+    padding: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  sideMenu: {
+    width: "70%",
+    height: "100%",
+    backgroundColor: "#fff",
+    paddingTop: 50,
+    paddingHorizontal: 16,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  menuHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    marginBottom: 20,
+  },
+  menuTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+  },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+  },
+  menuItemText: {
+    marginLeft: 16,
+    fontSize: 16,
+  },
+  logoutMenuItem: {
+    marginTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+    borderBottomWidth: 0,
   },
 });
